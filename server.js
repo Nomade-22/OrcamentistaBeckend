@@ -8,18 +8,22 @@ dotenv.config();
 
 const app = express();
 
-// ===== CORS (ajuste o domínio do seu site aqui ou via env) =====
-const ORIGIN = process.env.ALLOWED_ORIGIN || "https://nomade-22.github.io";
+/**
+ * CORS
+ * Ajuste a origem permitida via variável de ambiente ALLOWED_ORIGIN
+ * Ex.: https://nomade-22.github.io
+ */
+const ORIGIN = process.env.ALLOWED_ORIGIN || "*";
 app.use(cors({ origin: ORIGIN }));
 
 app.use(bodyParser.json({ limit: "1mb" }));
 
-// ===== Health check =====
+// Health check
 app.get("/", (req, res) => {
   res.json({ ok: true, app: "IA Orçamentista Backend", originAllowed: ORIGIN });
 });
 
-// ===== Endpoint do chat =====
+// Endpoint do chat
 app.post("/chat", async (req, res) => {
   try {
     const userMessage = (req.body?.message || "").toString().trim();
@@ -28,6 +32,7 @@ app.post("/chat", async (req, res) => {
     const apiKey = process.env.OPENAI_API_KEY;
     if (!apiKey) return res.status(500).json({ error: "OPENAI_API_KEY ausente no servidor." });
 
+    // Chamada à OpenAI (model gpt-4o-mini)
     const r = await fetch("https://api.openai.com/v1/chat/completions", {
       method: "POST",
       headers: {
@@ -37,7 +42,11 @@ app.post("/chat", async (req, res) => {
       body: JSON.stringify({
         model: "gpt-4o-mini",
         messages: [
-          { role: "system", content: "Você é o IA Orçamentista, especialista em cálculos e orçamentos de obras e serviços. Responda de forma clara, profissional e objetiva. Formate valores em reais (R$ 0.000,00). Se houver etapas, detalhe resumidamente." },
+          {
+            role: "system",
+            content:
+              "Você é o IA Orçamentista, especialista em cálculos e orçamentos de obras e serviços. Responda de forma clara, profissional e objetiva. Formate valores em reais (R$ 0.000,00) quando aplicável."
+          },
           { role: "user", content: userMessage }
         ]
       })
@@ -56,6 +65,6 @@ app.post("/chat", async (req, res) => {
   }
 });
 
-// ===== Porta =====
+// Porta
 const port = process.env.PORT || 3000;
 app.listen(port, () => console.log(`IA Orçamentista Backend rodando na porta ${port}`));
