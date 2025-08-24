@@ -1,5 +1,5 @@
 {
-  "name": "ia-orcamentista-backend",
+  "name": "orcamentista-backend",
   "version": "1.0.0",
   "private": true,
   "type": "module",
@@ -8,10 +8,10 @@
     "start": "node server.js"
   },
   "dependencies": {
-    "express": "^4.19.2",
     "body-parser": "^1.20.2",
-    "node-fetch": "^3.3.2",
     "cors": "^2.8.5",
-    "dotenv": "^16.4.5"
+    "dotenv": "^16.4.5",
+    "express": "^4.19.2",
+    "node-fetch": "^3.3.2"
   }
 }
