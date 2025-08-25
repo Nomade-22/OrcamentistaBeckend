@@ -159,6 +159,7 @@ app.get("/me", authUser, (req, res) => {
   });
 });
 
+/** ====== CHAT (respostas curtas e objetivas) ====== */
 app.post("/chat", authUser, checkQuota, async (req, res) => {
   try {
     const userMessage = (req.body?.message || "").toString().trim();
@@ -175,8 +176,16 @@ app.post("/chat", authUser, checkQuota, async (req, res) => {
       },
       body: JSON.stringify({
         model: "gpt-4o-mini",
+        temperature: 0.3,       // respostas mais estáveis
+        max_tokens: 220,        // rede de segurança para não “textão”
         messages: [
-          { role: "system", content: "Você é o IA Orçamentista. Responda com clareza, em R$ quando houver valores." },
+          {
+            role: "system",
+            content:
+              "Você é o IA Orçamentista. Responda sempre de forma curta, clara e objetiva, " +
+              "preferencialmente em até 3 frases. Quando houver valores, use R$ e mostre apenas " +
+              "o essencial para o usuário decidir. Evite rodeios, listas longas e repetições."
+          },
           { role: "user", content: userMessage }
         ]
       })
@@ -195,6 +204,7 @@ app.post("/chat", authUser, checkQuota, async (req, res) => {
     }
 
     const reply = data?.choices?.[0]?.message?.content || "Desculpe, não consegui gerar uma resposta.";
+
     incUsage(req.userToken);
 
     res.json({
@@ -215,12 +225,10 @@ app.post("/chat", authUser, checkQuota, async (req, res) => {
 });
 
 /** ====== ROTAS ADMIN (protegidas por X-Admin-Secret) ====== */
-// estado completo
 app.get("/admin/state", adminAuth, (_req, res) => {
   res.json({ plans: PLANS, users: USER_PLAN });
 });
 
-// criar/atualizar plano
 app.post("/admin/plan", adminAuth, (req, res) => {
   const { name, monthlyMessages, price } = req.body || {};
   if (!name || !monthlyMessages || !price) {
@@ -231,12 +239,10 @@ app.post("/admin/plan", adminAuth, (req, res) => {
   res.json({ ok: true, plans: PLANS });
 });
 
-// excluir plano
 app.delete("/admin/plan/:name", adminAuth, (req, res) => {
   const name = req.params.name;
   if (!PLANS[name]) return res.status(404).json({ error: "Plano não encontrado" });
 
-  // impede remover se houver usuários usando
   const usedBy = Object.entries(USER_PLAN).filter(([_, p]) => p === name).map(([u]) => u);
   if (usedBy.length) {
     return res.status(409).json({ error: "Plano em uso por usuários", users: usedBy });
@@ -247,7 +253,6 @@ app.delete("/admin/plan/:name", adminAuth, (req, res) => {
   res.json({ ok: true, plans: PLANS });
 });
 
-// criar/atualizar usuário
 app.post("/admin/user", adminAuth, (req, res) => {
   const { token, plan } = req.body || {};
   if (!token || !plan) return res.status(400).json({ error: "Campos necessários: token, plan" });
@@ -258,19 +263,16 @@ app.post("/admin/user", adminAuth, (req, res) => {
   res.json({ ok: true, users: USER_PLAN });
 });
 
-// excluir usuário
 app.delete("/admin/user/:token", adminAuth, (req, res) => {
   const token = req.params.token;
   if (!USER_PLAN[token]) return res.status(404).json({ error: "Usuário não encontrado" });
 
   delete USER_PLAN[token];
-  // limpa contador do mês atual
   usageCounters.delete(counterKey(token));
   saveData();
   res.json({ ok: true, users: USER_PLAN });
 });
 
-// renomear usuário
 app.post("/admin/user/rename", adminAuth, (req, res) => {
   const { oldToken, newToken } = req.body || {};
   if (!oldToken || !newToken) return res.status(400).json({ error: "Campos necessários: oldToken, newToken" });
@@ -281,7 +283,6 @@ app.post("/admin/user/rename", adminAuth, (req, res) => {
   delete USER_PLAN[oldToken];
   USER_PLAN[newToken] = plan;
 
-  // transfere contador do mês atual
   const oldKey = counterKey(oldToken);
   const newKey = counterKey(newToken);
   const used = usageCounters.get(oldKey) || 0;
