@@ -3,13 +3,14 @@ import bodyParser from "body-parser";
 import fetch from "node-fetch";
 import dotenv from "dotenv";
 import cors from "cors";
+import fs from "fs";
 
 dotenv.config();
 
 const app = express();
 app.use(bodyParser.json({ limit: "1mb" }));
 
-/** CORS: GitHub Pages + localhost */
+/** CORS: permita GitHub Pages + localhost (admin e chat) */
 const ALLOW_LIST = new Set([
   "https://nomade-22.github.io",
   "http://localhost:3000"
@@ -23,15 +24,17 @@ app.use(cors({
 }));
 app.options("*", cors());
 
-/** ====== PLANOS ====== */
-const PLANS = {
-  free:     { monthlyMessages: 500,   price: "R$0,00/mês" },
-  basico:   { monthlyMessages: 10000, price: "R$19,90/mês" },
-  pro:      { monthlyMessages: 50000, price: "R$49,90/mês" },
+/** ====== PERSISTÊNCIA EM JSON (VOLÁTIL ENTRE REDEPLOYS) ====== */
+const DATA_FILE = "./data.json";
+
+/** defaults */
+const DEFAULT_PLANS = {
+  free:   { monthlyMessages: 500,   price: "R$0,00/mês" },
+  basico: { monthlyMessages: 10000, price: "R$19,90/mês" },
+  pro:    { monthlyMessages: 50000, price: "R$49,90/mês" }
 };
 
-/** Usuários cadastrados (nome-sobrenome -> plano) */
-const USER_PLAN = {
+const DEFAULT_USERS = {
   "joao-silva": "free",
   "ana-souza": "free",
   "maria-oliveira": "basico",
@@ -39,7 +42,35 @@ const USER_PLAN = {
   "carlos-santos": "pro"
 };
 
-/** Contadores em memória: { "2025-08|joao-silva": 42 } */
+let PLANS = { ...DEFAULT_PLANS };
+let USER_PLAN = { ...DEFAULT_USERS };
+
+function loadData() {
+  try {
+    if (fs.existsSync(DATA_FILE)) {
+      const raw = fs.readFileSync(DATA_FILE, "utf-8");
+      const json = JSON.parse(raw || "{}");
+      if (json.plans && typeof json.plans === "object") PLANS = json.plans;
+      if (json.users && typeof json.users === "object") USER_PLAN = json.users;
+      console.log("[DATA] Carregado de", DATA_FILE);
+    } else {
+      saveData(); // cria com defaults
+    }
+  } catch (e) {
+    console.error("[DATA] Falha ao carregar:", e.message);
+  }
+}
+function saveData() {
+  try {
+    fs.writeFileSync(DATA_FILE, JSON.stringify({ plans: PLANS, users: USER_PLAN }, null, 2));
+    console.log("[DATA] Salvo em", DATA_FILE);
+  } catch (e) {
+    console.error("[DATA] Falha ao salvar:", e.message);
+  }
+}
+loadData();
+
+/** CONTADORES EM MEMÓRIA: { "YYYY-MM|token": used } */
 const usageCounters = new Map();
 
 function currentMonthKey() {
@@ -48,11 +79,12 @@ function currentMonthKey() {
   const mm = String(now.getUTCMonth() + 1).padStart(2, "0");
   return `${yyyy}-${mm}`;
 }
-function getCounterKey(userToken) {
-  return `${currentMonthKey()}|${userToken}`;
+function counterKey(token) {
+  return `${currentMonthKey()}|${token}`;
 }
 
-/** Middleware: autenticação */
+/** ====== MIDDLEWARES ====== */
+/** auth do cliente para o chat */
 function authUser(req, res, next) {
   const token = (req.header("X-Client-Token") || "").trim();
   if (!token) return res.status(401).json({ error: "Faltou o header X-Client-Token." });
@@ -63,12 +95,13 @@ function authUser(req, res, next) {
   req.userToken = token;
   req.planName = planName;
   req.plan = PLANS[planName];
+  if (!req.plan) return res.status(500).json({ error: "Plano inexistente para este usuário." });
   next();
 }
 
-/** Middleware: checa cota mensal */
+/** cota por plano */
 function checkQuota(req, res, next) {
-  const key = getCounterKey(req.userToken);
+  const key = counterKey(req.userToken);
   const used = usageCounters.get(key) || 0;
   const limit = req.plan.monthlyMessages;
 
@@ -85,27 +118,35 @@ function checkQuota(req, res, next) {
   }
   next();
 }
-
-function incrementUsage(userToken) {
-  const key = getCounterKey(userToken);
-  const used = usageCounters.get(key) || 0;
-  usageCounters.set(key, used + 1);
+function incUsage(token) {
+  const key = counterKey(token);
+  usageCounters.set(key, (usageCounters.get(key) || 0) + 1);
 }
 
-/** Health */
+/** proteção admin por header */
+const ADMIN_SECRET = process.env.ADMIN_SECRET || "";
+function adminAuth(req, res, next) {
+  const secret = req.header("X-Admin-Secret") || "";
+  if (!ADMIN_SECRET || secret !== ADMIN_SECRET) {
+    return res.status(401).json({ error: "Não autorizado (admin)." });
+  }
+  next();
+}
+
+/** ====== ROTAS PÚBLICAS ====== */
 app.get("/", (_req, res) => {
   res.json({
     ok: true,
     app: "IA Orçamentista Backend",
     now: new Date().toISOString(),
-    plans: PLANS,
-    hasKey: Boolean(process.env.OPENAI_API_KEY)
+    hasKey: Boolean(process.env.OPENAI_API_KEY),
+    plans: Object.keys(PLANS),
+    corsAllow: Array.from(ALLOW_LIST)
   });
 });
 
-/** Consulta de uso */
 app.get("/me", authUser, (req, res) => {
-  const key = getCounterKey(req.userToken);
+  const key = counterKey(req.userToken);
   const used = usageCounters.get(key) || 0;
   res.json({
     user: req.userToken,
@@ -118,7 +159,6 @@ app.get("/me", authUser, (req, res) => {
   });
 });
 
-/** Chat */
 app.post("/chat", authUser, checkQuota, async (req, res) => {
   try {
     const userMessage = (req.body?.message || "").toString().trim();
@@ -155,8 +195,7 @@ app.post("/chat", authUser, checkQuota, async (req, res) => {
     }
 
     const reply = data?.choices?.[0]?.message?.content || "Desculpe, não consegui gerar uma resposta.";
-
-    incrementUsage(req.userToken);
+    incUsage(req.userToken);
 
     res.json({
       reply,
@@ -165,7 +204,7 @@ app.post("/chat", authUser, checkQuota, async (req, res) => {
         plan: req.planName,
         price: req.plan.price,
         period: currentMonthKey(),
-        used: usageCounters.get(getCounterKey(req.userToken)) || 0,
+        used: usageCounters.get(counterKey(req.userToken)) || 0,
         limit: req.plan.monthlyMessages
       }
     });
@@ -173,6 +212,84 @@ app.post("/chat", authUser, checkQuota, async (req, res) => {
     console.error("ERRO /chat:", err);
     res.status(500).json({ error: "Erro no servidor", details: err.message });
   }
+});
+
+/** ====== ROTAS ADMIN (protegidas por X-Admin-Secret) ====== */
+// estado completo
+app.get("/admin/state", adminAuth, (_req, res) => {
+  res.json({ plans: PLANS, users: USER_PLAN });
+});
+
+// criar/atualizar plano
+app.post("/admin/plan", adminAuth, (req, res) => {
+  const { name, monthlyMessages, price } = req.body || {};
+  if (!name || !monthlyMessages || !price) {
+    return res.status(400).json({ error: "Campos necessários: name, monthlyMessages, price" });
+  }
+  PLANS[name] = { monthlyMessages: Number(monthlyMessages), price: String(price) };
+  saveData();
+  res.json({ ok: true, plans: PLANS });
+});
+
+// excluir plano
+app.delete("/admin/plan/:name", adminAuth, (req, res) => {
+  const name = req.params.name;
+  if (!PLANS[name]) return res.status(404).json({ error: "Plano não encontrado" });
+
+  // impede remover se houver usuários usando
+  const usedBy = Object.entries(USER_PLAN).filter(([_, p]) => p === name).map(([u]) => u);
+  if (usedBy.length) {
+    return res.status(409).json({ error: "Plano em uso por usuários", users: usedBy });
+  }
+
+  delete PLANS[name];
+  saveData();
+  res.json({ ok: true, plans: PLANS });
+});
+
+// criar/atualizar usuário
+app.post("/admin/user", adminAuth, (req, res) => {
+  const { token, plan } = req.body || {};
+  if (!token || !plan) return res.status(400).json({ error: "Campos necessários: token, plan" });
+  if (!PLANS[plan]) return res.status(404).json({ error: "Plano inexistente" });
+
+  USER_PLAN[token] = plan;
+  saveData();
+  res.json({ ok: true, users: USER_PLAN });
+});
+
+// excluir usuário
+app.delete("/admin/user/:token", adminAuth, (req, res) => {
+  const token = req.params.token;
+  if (!USER_PLAN[token]) return res.status(404).json({ error: "Usuário não encontrado" });
+
+  delete USER_PLAN[token];
+  // limpa contador do mês atual
+  usageCounters.delete(counterKey(token));
+  saveData();
+  res.json({ ok: true, users: USER_PLAN });
+});
+
+// renomear usuário
+app.post("/admin/user/rename", adminAuth, (req, res) => {
+  const { oldToken, newToken } = req.body || {};
+  if (!oldToken || !newToken) return res.status(400).json({ error: "Campos necessários: oldToken, newToken" });
+  if (!USER_PLAN[oldToken]) return res.status(404).json({ error: "Usuário antigo não existe" });
+  if (USER_PLAN[newToken]) return res.status(409).json({ error: "Novo token já existe" });
+
+  const plan = USER_PLAN[oldToken];
+  delete USER_PLAN[oldToken];
+  USER_PLAN[newToken] = plan;
+
+  // transfere contador do mês atual
+  const oldKey = counterKey(oldToken);
+  const newKey = counterKey(newToken);
+  const used = usageCounters.get(oldKey) || 0;
+  usageCounters.delete(oldKey);
+  usageCounters.set(newKey, used);
+
+  saveData();
+  res.json({ ok: true, users: USER_PLAN });
 });
 
 /** Porta */
