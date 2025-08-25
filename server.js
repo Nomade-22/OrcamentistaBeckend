@@ -9,14 +9,14 @@ dotenv.config();
 const app = express();
 app.use(bodyParser.json({ limit: "1mb" }));
 
-/** CORS: permite GitHub Pages + localhost */
+/** CORS: GitHub Pages + localhost */
 const ALLOW_LIST = new Set([
   "https://nomade-22.github.io",
   "http://localhost:3000"
 ]);
 app.use(cors({
   origin(origin, cb) {
-    if (!origin) return cb(null, true); // curl/reqbin
+    if (!origin) return cb(null, true);
     if (ALLOW_LIST.has(origin)) return cb(null, true);
     return cb(new Error("Not allowed by CORS: " + origin));
   }
@@ -25,22 +25,23 @@ app.options("*", cors());
 
 /** ====== PLANOS ====== */
 const PLANS = {
-  free:   { monthlyMessages: 500,   price: "R$0,00/mês" },
-  basico: { monthlyMessages: 10000, price: "R$19,90/mês" },
-  pro:    { monthlyMessages: 50000, price: "R$49,90/mês" },
+  free:     { monthlyMessages: 500,   price: "R$0,00/mês" },
+  basico:   { monthlyMessages: 10000, price: "R$19,90/mês" },
+  pro:      { monthlyMessages: 50000, price: "R$49,90/mês" },
 };
 
-/** Usuários de exemplo (token -> plano) */
+/** Usuários cadastrados (nome-sobrenome -> plano) */
 const USER_PLAN = {
-  "tok-free-001": "free",
-  "tok-basico-001": "basico",
-  "tok-pro-001": "pro",
+  "joao-silva": "free",
+  "ana-souza": "free",
+  "maria-oliveira": "basico",
+  "pedro-almeida": "basico",
+  "carlos-santos": "pro"
 };
 
-/** Contadores em memória: { "2025-08|tok-xxx": 42 } */
+/** Contadores em memória: { "2025-08|joao-silva": 42 } */
 const usageCounters = new Map();
 
-/** Helpers de período mensal */
 function currentMonthKey() {
   const now = new Date();
   const yyyy = now.getUTCFullYear();
@@ -51,7 +52,7 @@ function getCounterKey(userToken) {
   return `${currentMonthKey()}|${userToken}`;
 }
 
-/** Middleware: autenticação via header */
+/** Middleware: autenticação */
 function authUser(req, res, next) {
   const token = (req.header("X-Client-Token") || "").trim();
   if (!token) return res.status(401).json({ error: "Faltou o header X-Client-Token." });
@@ -85,7 +86,6 @@ function checkQuota(req, res, next) {
   next();
 }
 
-/** Incrementa uso */
 function incrementUsage(userToken) {
   const key = getCounterKey(userToken);
   const used = usageCounters.get(key) || 0;
@@ -108,6 +108,7 @@ app.get("/me", authUser, (req, res) => {
   const key = getCounterKey(req.userToken);
   const used = usageCounters.get(key) || 0;
   res.json({
+    user: req.userToken,
     plan: req.planName,
     price: req.plan.price,
     monthlyLimit: req.plan.monthlyMessages,
@@ -117,7 +118,7 @@ app.get("/me", authUser, (req, res) => {
   });
 });
 
-/** Rota de chat */
+/** Chat */
 app.post("/chat", authUser, checkQuota, async (req, res) => {
   try {
     const userMessage = (req.body?.message || "").toString().trim();
@@ -148,7 +149,7 @@ app.post("/chat", authUser, checkQuota, async (req, res) => {
     }
 
     let data;
-    try { data = JSON.parse(raw); } 
+    try { data = JSON.parse(raw); }
     catch {
       return res.status(500).json({ error: "Resposta inválida da OpenAI", raw: raw.slice(0, 500) });
     }
@@ -160,6 +161,7 @@ app.post("/chat", authUser, checkQuota, async (req, res) => {
     res.json({
       reply,
       usage: {
+        user: req.userToken,
         plan: req.planName,
         price: req.plan.price,
         period: currentMonthKey(),
