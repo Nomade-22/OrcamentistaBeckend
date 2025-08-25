@@ -82,3 +82,6 @@ app.post("/chat", async (req, res) => {
 // ===== Porta =====
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => console.log(`IA Orçamentista Backend na porta ${PORT}`));
+
+console.log("[BOOT] Tem OPENAI_API_KEY?", !!process.env.OPENAI_API_KEY);
+console.log("[BOOT] ALLOWED_ORIGIN:", process.env.ALLOWED_ORIGIN);
