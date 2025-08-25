@@ -1,3 +1,4 @@
+// server.js
 import express from "express";
 import bodyParser from "body-parser";
 import fetch from "node-fetch";
@@ -8,38 +9,43 @@ dotenv.config();
 
 const app = express();
 
-// LOGS DE BOOT
-console.log("[BOOT] Tem OPENAI_API_KEY?", !!process.env.OPENAI_API_KEY);
-console.log("[BOOT] ALLOWED_ORIGIN:", process.env.ALLOWED_ORIGIN);
+/**
+ * CORS: permita apenas as origens do front
+ * (GitHub Pages + localhost p/ desenvolvimento)
+ */
+const ALLOW_LIST = new Set([
+  "https://nomade-22.github.io",
+  "http://localhost:3000"
+]);
 
-// CORS: permite sem Origin (curl/reqbin) e permite seu GitHub Pages
-const allowedOrigin = process.env.ALLOWED_ORIGIN; // ex.: https://nomade-22.github.io/CalcGPT
 app.use(cors({
-  origin(origin, cb) {
-    if (!origin) return cb(null, true); // reqs sem origin (curl, reqbin)
-    if (origin === allowedOrigin) return cb(null, true);
-    return cb(new Error("Não autorizado pelo CORS: " + origin));
+  origin: (origin, cb) => {
+    // chamadas sem Origin (ex.: curl/reqbin) — permita
+    if (!origin) return cb(null, true);
+    if (ALLOW_LIST.has(origin)) return cb(null, true);
+    return cb(new Error("Not allowed by CORS: " + origin));
   }
 }));
+app.options("*", cors()); // preflight
 
 app.use(bodyParser.json({ limit: "1mb" }));
 
-// HEALTH CHECK (sem vazar a chave)
-app.get("/", (_req, res) => {
+// Health check
+app.get("/", (req, res) => {
   res.json({
     ok: true,
     app: "IA Orçamentista Backend",
-    hasKey: Boolean(process.env.OPENAI_API_KEY),
-    originAllowed: allowedOrigin || null,
     now: new Date().toISOString()
   });
 });
 
-// CHAT
+// Chat
 app.post("/chat", async (req, res) => {
   try {
     const userMessage = (req.body?.message || "").toString().trim();
-    if (!userMessage) return res.status(400).json({ error: "Mensagem vazia." });
+    if (!userMessage) {
+      return res.status(400).json({ error: "Mensagem vazia." });
+    }
 
     const apiKey = process.env.OPENAI_API_KEY;
     if (!apiKey) {
@@ -65,17 +71,19 @@ app.post("/chat", async (req, res) => {
     const text = await r.text();
     if (!r.ok) {
       console.error("❌ OpenAI ERRO:", r.status, text);
-      return res.status(500).json({ error: "Falha ao chamar OpenAI", details: text.slice(0, 500) });
+      return res.status(500).json({ error: "Falha ao chamar OpenAI", details: text });
     }
 
     let data;
-    try { data = JSON.parse(text); }
-    catch {
+    try {
+      data = JSON.parse(text);
+    } catch {
       console.error("❌ JSON inválido da OpenAI:", text);
-      return res.status(500).json({ error: "Resposta inválida da OpenAI", raw: text.slice(0, 500) });
+      return res.status(500).json({ error: "Resposta inválida da OpenAI", raw: text });
     }
 
-    const reply = data?.choices?.[0]?.message?.content || "Desculpe, não consegui gerar uma resposta.";
+    const reply = data?.choices?.[0]?.message?.content
+      || "Desculpe, não consegui gerar uma resposta.";
     res.json({ reply });
 
   } catch (err) {
@@ -84,16 +92,6 @@ app.post("/chat", async (req, res) => {
   }
 });
 
+// Porta Render/Heroku
 const port = process.env.PORT || 3000;
-app.listen(port, () => {
-  console.log(`🚀 IA Orçamentista Backend rodando na porta ${port}`);
-});
-
-// DEBUG: manter por enquanto
-app.get("/debug-env", (_req, res) => {
-  res.json({
-    hasKey: !!process.env.OPENAI_API_KEY,
-    keyPrefix: process.env.OPENAI_API_KEY ? process.env.OPENAI_API_KEY.slice(0, 7) : null,
-    allowedOrigin
-  });
-});
+app.listen(port, () => console.log(`🚀 IA Orçamentista Backend na porta ${port}`));
