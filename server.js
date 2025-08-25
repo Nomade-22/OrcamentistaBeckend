@@ -76,3 +76,13 @@ app.post("/chat", async (req, res) => {
 
 const port = process.env.PORT || 3000;
 app.listen(port, () => console.log(`🚀 IA Orçamentista Backend rodando na porta ${port}`));
+
+// DEBUG: REMOVER DEPOIS
+app.get("/debug-env", (req, res) => {
+  res.json({
+    hasKey: !!process.env.OPENAI_API_KEY,
+    keyPrefix: process.env.OPENAI_API_KEY
+      ? process.env.OPENAI_API_KEY.slice(0, 7) // mostra só o começo
+      : null
+  });
+});
