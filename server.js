@@ -8,23 +8,34 @@ dotenv.config();
 
 const app = express();
 
-// Logs de diagnóstico no boot
+// LOGS DE BOOT
 console.log("[BOOT] Tem OPENAI_API_KEY?", !!process.env.OPENAI_API_KEY);
 console.log("[BOOT] ALLOWED_ORIGIN:", process.env.ALLOWED_ORIGIN);
 
-// Configuração CORS
+// CORS: permite sem Origin (curl/reqbin) e permite seu GitHub Pages
+const allowedOrigin = process.env.ALLOWED_ORIGIN; // ex.: https://nomade-22.github.io/CalcGPT
 app.use(cors({
-  origin: process.env.ALLOWED_ORIGIN || "*"
+  origin(origin, cb) {
+    if (!origin) return cb(null, true); // reqs sem origin (curl, reqbin)
+    if (origin === allowedOrigin) return cb(null, true);
+    return cb(new Error("Não autorizado pelo CORS: " + origin));
+  }
 }));
 
 app.use(bodyParser.json({ limit: "1mb" }));
 
-// Health check
-app.get("/", (req, res) => {
-  res.json({ ok: true, app: "IA Orçamentista Backend", now: new Date().toISOString() });
+// HEALTH CHECK (sem vazar a chave)
+app.get("/", (_req, res) => {
+  res.json({
+    ok: true,
+    app: "IA Orçamentista Backend",
+    hasKey: Boolean(process.env.OPENAI_API_KEY),
+    originAllowed: allowedOrigin || null,
+    now: new Date().toISOString()
+  });
 });
 
-// Chat
+// CHAT
 app.post("/chat", async (req, res) => {
   try {
     const userMessage = (req.body?.message || "").toString().trim();
@@ -54,15 +65,14 @@ app.post("/chat", async (req, res) => {
     const text = await r.text();
     if (!r.ok) {
       console.error("❌ OpenAI ERRO:", r.status, text);
-      return res.status(500).json({ error: "Falha ao chamar OpenAI", details: text });
+      return res.status(500).json({ error: "Falha ao chamar OpenAI", details: text.slice(0, 500) });
     }
 
     let data;
-    try {
-      data = JSON.parse(text);
-    } catch {
+    try { data = JSON.parse(text); }
+    catch {
       console.error("❌ JSON inválido da OpenAI:", text);
-      return res.status(500).json({ error: "Resposta inválida da OpenAI", raw: text });
+      return res.status(500).json({ error: "Resposta inválida da OpenAI", raw: text.slice(0, 500) });
     }
 
     const reply = data?.choices?.[0]?.message?.content || "Desculpe, não consegui gerar uma resposta.";
@@ -75,14 +85,15 @@ app.post("/chat", async (req, res) => {
 });
 
 const port = process.env.PORT || 3000;
-app.listen(port, () => console.log(`🚀 IA Orçamentista Backend rodando na porta ${port}`));
+app.listen(port, () => {
+  console.log(`🚀 IA Orçamentista Backend rodando na porta ${port}`);
+});
 
-// DEBUG: REMOVER DEPOIS
-app.get("/debug-env", (req, res) => {
+// DEBUG: manter por enquanto
+app.get("/debug-env", (_req, res) => {
   res.json({
     hasKey: !!process.env.OPENAI_API_KEY,
-    keyPrefix: process.env.OPENAI_API_KEY
-      ? process.env.OPENAI_API_KEY.slice(0, 7) // mostra só o começo
-      : null
+    keyPrefix: process.env.OPENAI_API_KEY ? process.env.OPENAI_API_KEY.slice(0, 7) : null,
+    allowedOrigin
   });
 });
